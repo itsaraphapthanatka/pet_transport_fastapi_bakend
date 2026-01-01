@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg2-binary
+alembic
+python-dotenv
+pydantic
+pydantic-settings
+twilio>=8.0.0
+httpx
+email-validator
+redis
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
