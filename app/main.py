@@ -1,7 +1,7 @@
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect
 import asyncio
 from app.database import Base, engine
-from app.routers import users, drivers, pets, orders, driver_locations, order_tracking, notifications, live_tracking, driver_ws, auth, pricing, settings
+from app.routers import users, drivers, pets, orders, driver_locations, order_tracking, notifications, live_tracking, driver_ws, auth, pricing, settings, payments, wallet
 from fastapi.middleware.cors import CORSMiddleware
 from app.routers.chat import router as chat_router
 from app.routers.chat_ws import chat_ws
@@ -31,6 +31,8 @@ app.include_router(driver_ws.router, prefix="/driver_ws", tags=["Driver WS"])
 app.include_router(auth.router, prefix="/auth", tags=["Auth"])   
 app.include_router(pricing.router)   
 app.include_router(settings.router, prefix="/settings", tags=["Settings"])   
+app.include_router(payments.router, prefix="/payments", tags=["Payments"])
+app.include_router(wallet.router)
 
 app.include_router(chat_router)
 

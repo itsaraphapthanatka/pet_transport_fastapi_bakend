@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from typing import Optional
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Order, User, Driver, Pet, DeclinedOrder, DriverLocation
@@ -46,6 +47,13 @@ def create_order(
         pet_ids = [order_data['pet_id']]
 
     db_order = Order(**order_data)
+    
+    # Set default payment values if not provided
+    if not db_order.payment_method:
+        db_order.payment_method = "cash"
+    if not db_order.payment_status:
+        db_order.payment_status = "pending"
+        
     db.add(db_order)
     db.flush() # Flush to get ID
 
@@ -64,38 +72,64 @@ def create_order(
 
 @router.get("/", response_model=list[OrderOut])
 def list_orders(
+    status: Optional[str] = None,
+    driver_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    query = db.query(Order)
+    query = db.query(Order).order_by(Order.created_at.desc())
     
-    # If driver, apply filters
+    if status:
+        query = query.filter(Order.status == status)
+    
+    if driver_id:
+        query = query.filter(Order.driver_id == driver_id)
+        return query.all() # No radius filter if specifically asking for a driver's orders
+
+    # If driver (and no specific driver_id requested), apply filters for "available jobs"
     driver = db.query(Driver).filter(Driver.user_id == current_user.id).first()
     if driver:
+        # If the driver is asking for their OWN history via this endpoint, we should allow it.
+        # But usually, they call it without params for "available jobs".
+        
+        # If status is provided and it's NOT 'pending', it's likely a history view.
+        if status and status != 'pending':
+            query = query.filter(Order.driver_id == driver.id)
+            return query.all()
+
+        # Default behavior: Show available jobs (pending or already assigned to THEM)
         # 1. Hide declined orders
         declined_ids = db.query(DeclinedOrder.order_id).filter(DeclinedOrder.driver_id == driver.id).all()
         declined_ids = [r[0] for r in declined_ids]
         if declined_ids:
             query = query.filter(Order.id.notin_(declined_ids))
         
-        # 2. Filter by work radius (distance from driver's current location to pickup)
-        driver_location = db.query(DriverLocation).filter(DriverLocation.driver_id == driver.id).first()
-        if driver_location and driver.work_radius_km:
-            # Get all orders first, then filter by distance
-            all_orders = query.all()
-            filtered_orders = []
-            
-            for order in all_orders:
-                distance = calculate_distance(
-                    driver_location.lat,
-                    driver_location.lng,
-                    order.pickup_lat,
-                    order.pickup_lng
-                )
-                if distance <= driver.work_radius_km:
-                    filtered_orders.append(order)
-            
-            return filtered_orders
+        # 2. Filter by work radius for PENDING orders
+        # If status is 'pending' (or not provided, implying available jobs), we apply radius.
+        if not status or status == 'pending':
+            driver_location = db.query(DriverLocation).filter(DriverLocation.driver_id == driver.id).first()
+            if driver_location and driver.work_radius_km:
+                all_orders = query.all()
+                filtered_orders = []
+                for order in all_orders:
+                    # If it's already accepted by THIS driver, include it regardless of current radius
+                    if order.driver_id == driver.id:
+                        filtered_orders.append(order)
+                        continue
+                        
+                    # Otherwise check radius
+                    distance = calculate_distance(
+                        driver_location.lat,
+                        driver_location.lng,
+                        order.pickup_lat,
+                        order.pickup_lng
+                    )
+                    if distance <= driver.work_radius_km:
+                        filtered_orders.append(order)
+                return filtered_orders
+    else:
+        # If customer, only show their own orders
+        query = query.filter(Order.user_id == current_user.id)
             
     return query.all()
 
@@ -275,7 +309,14 @@ def complete_order(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Order must be in 'in_progress' status to complete (current: {order.status})"
         )
-        
+
+    # Check if paid
+    if order.payment_status != "paid":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Payment required before completion"
+        )
+            
     # Update status
     order.status = "completed"
     
@@ -351,3 +392,62 @@ def decline_order(
         db.commit()
         
     return {"message": "Order declined successfully"}
+@router.post("/{order_id}/pay-wallet", response_model=OrderOut)
+def pay_with_wallet(
+    order_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    order = db.query(Order).filter(Order.id == order_id).first()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+        
+    if order.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not your order")
+        
+    if order.payment_status == "paid":
+        return order
+        
+    if current_user.wallet_balance < order.price:
+        raise HTTPException(status_code=400, detail="Insufficient wallet balance")
+        
+    # Deduct balance
+    current_user.wallet_balance -= order.price
+    
+    # Update order
+    order.payment_status = "paid"
+    order.payment_method = "wallet"
+    
+    # Create Wallet Transaction
+    from app.models import WalletTransaction
+    txn = WalletTransaction(
+        user_id=current_user.id,
+        amount=-order.price,
+        type="payment",
+        status="success",
+        reference_id=str(order.id),
+        description=f"Payment for trip #{order.id}"
+    )
+    db.add(txn)
+    
+    # Update platform/driver earnings if needed (simulated for now)
+    # In a real app, you'd also credit the driver's wallet here (minus commission)
+    if order.driver_id:
+        driver = db.query(Driver).filter(Driver.id == order.driver_id).first()
+        if driver:
+            driver_user = db.query(User).filter(User.id == driver.user_id).first()
+            if driver_user:
+                driver_user.wallet_balance += order.driver_earnings
+                driver_txn = WalletTransaction(
+                    user_id=driver_user.id,
+                    amount=order.driver_earnings,
+                    type="earning",
+                    status="success",
+                    reference_id=str(order.id),
+                    description=f"Earnings from trip #{order.id}"
+                )
+                db.add(driver_txn)
+    
+    db.commit()
+    db.refresh(order)
+    return order

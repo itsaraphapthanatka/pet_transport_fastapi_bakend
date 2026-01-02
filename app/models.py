@@ -16,8 +16,10 @@ class User(Base):
     phone = Column(String(20), unique=True)
     email = Column(String(255), unique=True)
     role = Column(String(20), default="customer")
+    stripe_customer_id = Column(String(255), nullable=True)
 
     created_at = Column(TIMESTAMP, default=datetime.utcnow)
+    wallet_balance = Column(Numeric(10,2), default=0.00)
 
     pets = relationship("Pet", back_populates="owner")
     orders = relationship("Order", back_populates="customer")
@@ -67,6 +69,8 @@ class Order(Base):
     customer_lng = Column(Float, nullable=True)
 
     status = Column(String(20), default="pending")
+    payment_status = Column(String(20), default="pending") # pending, paid, failed, refunded
+    payment_method = Column(String(20), default="cash") # cash, promptpay, transfer
     price = Column(Numeric(10,2))
     platform_fee = Column(Numeric(10,2))  # 7% commission for platform
     driver_earnings = Column(Numeric(10,2))  # 93% earnings for driver
@@ -138,6 +142,7 @@ class Settings(Base):
     __tablename__ = "settings" 
     id = Column(Integer, primary_key=True, index=True)
     map = Column(String(255), nullable=False)
+    is_raining = Column(Boolean, default=False)
     
     def __repr__(self):
         return f"<Settings(id={self.id}, map='{self.map}')>"
@@ -175,3 +180,28 @@ class PetType(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(50), unique=True, nullable=False)
     icon = Column(String(50)) # e.g. "🐶"
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id = Column(Integer, primary_key=True, index=True)
+    order_id = Column(Integer, ForeignKey("orders.id", ondelete="CASCADE"))
+    amount = Column(Numeric(10,2), nullable=False)
+    status = Column(String(20), default="pending") # pending, successful, failed
+    method = Column(String(50)) # cash, promptpay, transfer, credit_card
+    transaction_id = Column(String(255), nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
+
+    order = relationship("Order")
+
+class WalletTransaction(Base):
+    __tablename__ = "wallet_transactions"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    amount = Column(Numeric(10,2), nullable=False) # Positive for credit, negative for debit
+    type = Column(String(20), nullable=False) # topup, payment, withdrawal, refund
+    status = Column(String(20), default="pending") # pending, success, failed
+    reference_id = Column(String(100), nullable=True) # e.g. order_id or external txn id
+    description = Column(String(255), nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow)
+
+    user = relationship("User")

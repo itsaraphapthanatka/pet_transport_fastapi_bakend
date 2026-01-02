@@ -41,6 +41,9 @@ class EstimateResponse(BaseModel):
     distance_km: float
     duration_min: float
     estimated_price: int
+    weight_surcharge: int
+    surge_multiplier: float
+    surge_reasons: list[str] = []
 
 
 class VehicleTypeInfo(BaseModel):
@@ -165,11 +168,7 @@ async def estimate_price(request: EstimateRequest, db: Session = Depends(get_db)
     distance_cost = distance_km * rates["per_km"]
     time_cost = duration_min * rates["per_min"]
     
-    # Weight-based surcharge
-    # 0-10kg: no charge
-    # 11-20kg: +20 THB
-    # 21-30kg: +40 THB
-    # 30kg+: +60 THB
+    # 1. Weight Surcharge
     weight_surcharge = 0
     if request.pet_weight_kg > 30:
         weight_surcharge = 60
@@ -178,13 +177,52 @@ async def estimate_price(request: EstimateRequest, db: Session = Depends(get_db)
     elif request.pet_weight_kg > 10:
         weight_surcharge = 20
 
-    total_price = base_fare + distance_cost + time_cost + weight_surcharge
-    final_price = max(rates["min"], int(total_price))
+    # 2. Dynamic Surge Pricing
+    surge_multiplier = 1.0
+    surge_reasons = []
+
+    # A. Peak Hours (7-9 AM, 5-8 PM)
+    from datetime import datetime, timedelta
+    now_utc = datetime.utcnow()
+    now_th = now_utc + timedelta(hours=7)
+    hour = now_th.hour
+
+    if 7 <= hour <= 9:
+        surge_multiplier += 0.5
+        surge_reasons.append("Morning Peak Hour")
+    elif 17 <= hour <= 20:
+        surge_multiplier += 0.5
+        surge_reasons.append("Evening Peak Hour")
+
+    # B. Traffic Surge (based on speed)
+    speed_kmh = (distance_km / (duration_min / 60)) if duration_min > 0 else 60
+    if speed_kmh < 15:
+        surge_multiplier += 0.3
+        surge_reasons.append("Heavy Traffic")
+    elif speed_kmh < 25:
+        surge_multiplier += 0.15
+        surge_reasons.append("Moderate Traffic")
+
+    # C. Weather (Settings controlled)
+    if setting and hasattr(setting, 'is_raining') and setting.is_raining:
+        surge_multiplier += 0.4
+        surge_reasons.append("Rainy Weather")
+
+    # Apply surge to base components (Base + Distance + Time)
+    base_components = base_fare + distance_cost + time_cost
+    total_after_surge = base_components * surge_multiplier
+    
+    total_price = total_after_surge + weight_surcharge
+    # Use round() for more accurate pricing that matches frontend Math.round
+    final_price = max(rates["min"], round(total_price))
 
     return EstimateResponse(
         distance_km=round(distance_km, 1),
         duration_min=round(duration_min, 0),
-        estimated_price=final_price
+        estimated_price=final_price,
+        weight_surcharge=weight_surcharge,
+        surge_multiplier=round(surge_multiplier, 2),
+        surge_reasons=surge_reasons
     )
 
 @router.get("/settings", response_model=SettingsOut)

@@ -16,7 +16,7 @@ class SettingOut(BaseModel):
     description: Optional[str] = None
     
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 def get_setting(db: Session, key: str, default: str = None) -> str:
     """Helper function to get a setting value from database"""

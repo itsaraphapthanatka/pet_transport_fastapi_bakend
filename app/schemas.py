@@ -1,12 +1,17 @@
 from pydantic import BaseModel, EmailStr
 from datetime import datetime
 from typing import Optional, List
+from decimal import Decimal
+
 
 # ---------- User ----------
 class UserBase(BaseModel):
     full_name: str
     phone: Optional[str] = None
     email: Optional[str] = None
+    wallet_balance: Optional[Decimal] = Decimal("0.0")
+    stripe_customer_id: Optional[str] = None
+
 
 class UserCreate(BaseModel):
     full_name: str
@@ -17,7 +22,7 @@ class UserCreate(BaseModel):
 class UserOut(UserBase):
     id: int
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # ---------- Driver ----------
 class DriverBase(BaseModel):
@@ -26,6 +31,7 @@ class DriverBase(BaseModel):
     vehicle_plate: Optional[str] = None
     is_online: bool = False
     work_radius_km: float = 10.0
+
 
 class DriverCreate(DriverBase):
     pass
@@ -42,7 +48,7 @@ class DriverOut(DriverBase):
     id: int
     user: UserOut
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # ---------- Pet ----------
 class PetBase(BaseModel):
@@ -59,7 +65,7 @@ class PetOut(PetBase):
     id: int
     owner: UserOut
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # ---------- Pet Type ----------
 class PetTypeBase(BaseModel):
@@ -69,7 +75,7 @@ class PetTypeBase(BaseModel):
 class PetTypeOut(PetTypeBase):
     id: int
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # ---------- Order ----------
 class OrderBase(BaseModel):
@@ -83,14 +89,18 @@ class OrderBase(BaseModel):
     dropoff_lat: float
     dropoff_lng: float
     status: Optional[str] = "pending"
-    price: Optional[float] = None
-    platform_fee: Optional[float] = None
-    driver_earnings: Optional[float] = None
-    commission_rate: Optional[float] = None
+    price: Optional[Decimal] = None
+    platform_fee: Optional[Decimal] = None
+    driver_earnings: Optional[Decimal] = None
+    commission_rate: Optional[Decimal] = None
+
     passengers: Optional[int] = 1
     pet_details: Optional[str] = None
     customer_lat: Optional[float] = None
     customer_lng: Optional[float] = None
+    payment_status: Optional[str] = "pending"
+    payment_method: Optional[str] = "cash"
+    created_at: Optional[datetime] = None
 
 class OrderCreate(OrderBase):
     pet_ids: Optional[List[int]] = None
@@ -98,9 +108,12 @@ class OrderCreate(OrderBase):
 class OrderUpdate(BaseModel):
     status: Optional[str] = None
     driver_id: Optional[int] = None
-    price: Optional[float] = None
+    price: Optional[Decimal] = None
+
     customer_lat: Optional[float] = None
     customer_lng: Optional[float] = None
+    payment_status: Optional[str] = None
+    payment_method: Optional[str] = None
 
 class OrderOut(OrderBase):
     id: int
@@ -109,7 +122,7 @@ class OrderOut(OrderBase):
     pet: Optional[PetOut] = None # Keeping for backward compatibility
     pets: List[PetOut] = []
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # ---------- Driver Location ----------
 class DriverLocationBase(BaseModel):
@@ -128,7 +141,7 @@ class DriverLocationOut(DriverLocationBase):
     id: int
     driver: Optional[DriverOut] = None
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # ---------- OrderTracking ----------
 class OrderTrackingBase(BaseModel):
@@ -143,7 +156,7 @@ class OrderTrackingCreate(OrderTrackingBase):
 class OrderTrackingOut(OrderTrackingBase):
     id: int
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # ---------- Notification ----------
 class NotificationBase(BaseModel):
@@ -159,7 +172,7 @@ class NotificationOut(NotificationBase):
     id: int
     created_at: datetime
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 # ---------- Authentication ----------
 class LoginRequest(BaseModel):
@@ -178,6 +191,9 @@ class UserResponse(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     role: str
+    wallet_balance: Decimal = Decimal("0.0")
+    stripe_customer_id: Optional[str] = None
+
     
     class Config:
         from_attributes = True
@@ -202,7 +218,7 @@ class SettingsCreate(SettingsBase):
 class SettingsOut(SettingsBase):
     id: int
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class ChatMessageCreate(BaseModel):
     order_id: int
@@ -230,3 +246,67 @@ class DeclinedOrderOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+# ---------- Payment ----------
+class PaymentBase(BaseModel):
+    order_id: int
+    amount: Decimal
+
+    status: Optional[str] = "pending"
+    method: Optional[str] = None
+    transaction_id: Optional[str] = None
+
+class PaymentCreate(PaymentBase):
+    pass
+
+class PaymentOut(PaymentBase):
+    id: int
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class PaymentMethodOut(BaseModel):
+    id: str
+    brand: Optional[str] = None
+    last4: Optional[str] = None
+    exp_month: Optional[int] = None
+    exp_year: Optional[int] = None
+
+class SetupIntentResponse(BaseModel):
+    setupIntent: str
+    ephemeralKey: str
+    customer: str
+    publishableKey: Optional[str] = None
+
+# ---------- Wallet ----------
+class WalletTransactionBase(BaseModel):
+    amount: Decimal
+
+    type: str
+    status: Optional[str] = "pending"
+    reference_id: Optional[str] = None
+    description: Optional[str] = None
+
+class WalletTransactionCreate(WalletTransactionBase):
+    pass
+
+class WalletTransactionOut(WalletTransactionBase):
+    id: int
+    user_id: int
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+class WalletTopupRequest(BaseModel):
+    amount: Decimal
+
+    method: str = "promptpay"
+
+class TopupIntentResponse(BaseModel):
+    paymentIntent: str
+    ephemeralKey: str
+    customer: str
+    publishableKey: Optional[str] = None
+    transaction_id: int
+
+

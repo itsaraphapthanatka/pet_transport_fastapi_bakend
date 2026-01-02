@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     twilio_phone_number: str
     google_maps_api_key: str
     here_maps_api_key: Optional[str] = None
+    stripe_secret_key: str
+    stripe_publishable_key: Optional[str] = None
     
     class Config:
         env_file = ".env"  # บอกให้ Pydantic โหลดค่า environment จาก .env

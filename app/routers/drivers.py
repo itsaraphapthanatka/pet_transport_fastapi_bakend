@@ -80,7 +80,7 @@ def update_driver_settings(
 
 @router.get("/earnings/summary")
 def get_earnings_summary(
-    period: str = Query("daily", regex="^(daily|weekly|monthly)$"),
+    period: str = Query("daily", pattern="^(daily|weekly|monthly)$"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
@@ -95,13 +95,13 @@ def get_earnings_summary(
     now = datetime.utcnow()
     
     if period == "daily":
-        start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_date = now - timedelta(days=1)
         end_date = now
     elif period == "weekly":
         start_date = now - timedelta(days=7)
         end_date = now
     else:  # monthly
-        start_date = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        start_date = now - timedelta(days=30)
         end_date = now
     
     # Query completed orders for this driver in the date range
